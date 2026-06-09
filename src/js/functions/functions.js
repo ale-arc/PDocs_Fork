@@ -13,6 +13,20 @@ let aborted = false;
 let flagError = false;
 let flagConfirmSpecialChars = false;
 let forceNames = false;
+let useExistingProcess = false;
+let processoColumn = '';
+let blocoAssinatura = '';
+
+/* Extrai os parâmetros (query string) de uma URL do SEI em um objeto */
+const getUrlParams = (url) => {
+  const params = {};
+  if (!url || url.indexOf('?') === -1) return params;
+  url.split('?')[1].split('&').forEach((pair) => {
+    const [key, value] = pair.split('=');
+    if (key) params[key] = decodeURIComponent(value || '');
+  });
+  return params;
+}
 
 export const setSeiVersion = () => {
   const logoSeiTitle = $(`img[title^=Sistema]`).attr('title').trim();
@@ -310,10 +324,37 @@ export const printDataCrossing = () => {
         <option value="0">Não preencher o campo "Descrição" do documento</option>
         </select>
       </div>
+      <hr style="all:revert">
+      <div>
+        <div class="divInputForceNames">
+          <input id="checkProcessoDestino" type="checkbox">
+          <label for="checkProcessoDestino">Inserir cada documento em um <strong>processo existente</strong> informado na planilha</label>
+        </div>
+        <div id="divProcessoDestino" style="display:none">
+          <p>Selecione a coluna que contém o <strong>NÚMERO DO PROCESSO</strong> de destino</p>
+          <select id="colunaProcesso">${selectData}</select>
+          <small style="font-size:0.7rem">O documento será criado no processo correspondente a cada linha, em vez do processo atual.</small>
+        </div>
+      </div>
+      <hr style="all:revert">
+      <div>
+        <div class="divInputForceNames">
+          <input id="checkBloco" type="checkbox">
+          <label for="checkBloco">Incluir documentos gerados em <strong>bloco de assinatura</strong></label>
+        </div>
+        <div id="divBloco" style="display:none">
+          <p>Número do Bloco de Assinatura (aceita número fixo ou <code>##coluna##</code>)</p>
+          <input id="inputBloco" type="text" placeholder="Ex: ##bloco## ou 1234" style="width:95%">
+        </div>
+      </div>
       </div>
       `: ""}`)
 
   }
+
+  /* Liga/desliga os campos das opções adicionais conforme os checkboxes */
+  $('#checkProcessoDestino').on('change', function () { $('#divProcessoDestino').toggle(this.checked); adjustModalPosition('cruzData'); });
+  $('#checkBloco').on('change', function () { $('#divBloco').toggle(this.checked); adjustModalPosition('cruzData'); });
 
   adjustModalPosition('cruzData');
   setTimeout(() => $('#cruzData')[0].scrollTo(0, 0), 300);
@@ -338,13 +379,31 @@ export const getDescricaoDoc = () => {
   descricaoDoc = val
 }
 
+export const getProcessoConfig = () => {
+  useExistingProcess = $('#checkProcessoDestino').is(':checked');
+  processoColumn = useExistingProcess ? $('#colunaProcesso').val() : '';
+}
+
+export const getBlocoConfig = () => {
+  blocoAssinatura = $('#checkBloco').is(':checked') ? ($('#inputBloco').val() || '').trim() : '';
+}
+
 export const execute = async () => {
 
   aborted = false;
 
   const idIframe = /^4\.1|^4\.0\.(9|12)|^5/.test(getSeiVersion()) ? "#ifrConteudoVisualizacao" : "#ifrVisualizacao";
 
-  const urlNewDoc = $(idIframe).contents().find("img[alt='Incluir Documento'").parent().attr('href');
+  /* No modo padrão (processo atual) o alvo é resolvido uma única vez a partir do iframe.
+     No modo "processo existente" o alvo é resolvido por linha em resolveNewDocTarget(). */
+  let staticTarget = null;
+  if (!useExistingProcess) {
+    staticTarget = {
+      urlNewDoc: $(idIframe).contents().find("img[alt='Incluir Documento'").parent().attr('href'),
+      urlArvore: $('#ifrArvore').attr('src')
+    };
+  }
+
 
 
   if (getSeiVersion().startsWith("3")) {
@@ -374,7 +433,9 @@ Deseja continuar ?
 
     try {
 
-      const response1 = await clickNewDoc(urlNewDoc);
+      const target = useExistingProcess ? await resolveNewDocTarget(CSVData[i]) : staticTarget;
+
+      const response1 = await clickNewDoc(target.urlNewDoc);
 
       const response2 = await selectDocType(response1.urlExpandDocList);
 
@@ -386,13 +447,30 @@ Deseja continuar ?
 
       const response6 = await saveDoc(response5.urlSubmitForm, response5.paramsSaveDoc);
 
+      if (response6.success && blocoAssinatura) {
+        const numBloco = blocoAssinatura.replace(/##(.*?)##/g, (match, col) =>
+          CSVData[i][col] !== undefined ? CSVData[i][col] : match).trim();
+        const idDocumento = getUrlParams(response4.urlEditor).id_documento;
+        /* Falha de bloco é não-fatal: o documento já foi criado no processo correto;
+           registramos o erro no console e seguimos para a próxima linha. */
+        try {
+          if (idDocumento && numBloco)
+            await incluirEmBloco(idDocumento, numBloco, target.urlArvore);
+        } catch (blocoErr) {
+          console.error(`PluriDocs: falha ao incluir documento da linha ${i + 1} no bloco de assinatura ->`, blocoErr);
+        }
+      }
+
       response6.success && $('#progress').html(`<p style="text-align:center">${i + 1}/${CSVData.length}</p>`);
 
       if (i + 1 === CSVData.length) throw new Error("cancel");
 
     } catch (e) {
       if (e.message && e.message === "cancel") {
-        $('#ifrArvore').contents()[0].location.reload();
+        /* No modo "processo existente" os documentos foram criados em outros processos;
+           recarregar a árvore do processo atual é inútil e ainda dispara um erro interno
+           do SEI (alterarTargetAcoes / seletor !=). Só recarregamos no modo padrão. */
+        if (!useExistingProcess) $('#ifrArvore').contents()[0].location.reload();
         setTimeout(() => {
           $('#cancelExecute').hide();
           $('#progress').html(`<p style="text-align:center">Progresso finalizado!</p>`)
@@ -512,6 +590,7 @@ const formNewDoc = async (urlFormNewDoc, params0, data) => {
   const urlConfirmDocData = form.attr('action');
 
   const numeroOpcional = form.find("#lblNumero").attr('class') === 'infraLabelOpcional';
+  const nomeOpcional = form.find("#lblNomeArvore").attr('class') === 'infraLabelOpcional';
 
   let params = {};
   form.find("input[type=hidden]").each(function () {
@@ -546,11 +625,23 @@ const formNewDoc = async (urlFormNewDoc, params0, data) => {
   }
   params.txtProtocoloDocumentoTextoBase = selectedModel.numero;
 
-  if (!numeroOpcional | forceNames) {
-    params.txtNumero = data[docsNames].replace(regex, (match) => normalChars[match]).substring(0, 50);
+  /* Valor escolhido para nomear o documento na árvore (coluna do CSV) */
+  const nomeArvore = (docsNames && data[docsNames])
+    ? data[docsNames].replace(regex, (match) => normalChars[match]).substring(0, 50)
+    : '';
+
+  /* "Número" (txtNumero): preenchido apenas quando obrigatório ou forçado (SEI 3).
+     Forçar este campo em tipos onde ele é opcional faz o SEI rejeitar a criação. */
+  if (!numeroOpcional || forceNames) {
+    params.txtNumero = nomeArvore;
   } else {
     params.txtNumero = '';
   }
+
+  /* No SEI 4.1+ o nome na árvore tem campo próprio (txtNomeArvore), distinto do "Número".
+     É onde o nome efetivamente aparece na árvore para a maioria dos tipos de documento. */
+  const isModernSei = /^4\.1|^4\.0\.(9|12)|^5/.test(getSeiVersion());
+  params.txtNomeArvore = (nomeOpcional && isModernSei) ? nomeArvore : '';
 
   if (aborted) throw new Error("cancel");
   return {
@@ -646,6 +737,171 @@ const saveDoc = async (urlSubmitForm, paramsSaveDoc) => {
     throw new Error(responseSave);
   }
 
+}
+
+/**
+ * Resolve o link de "Incluir Documento" e a URL da árvore do processo de destino
+ * de uma linha do CSV, quando o modo "processo existente" está ativo.
+ * Localiza o processo pela pesquisa de protocolo do SEI e extrai os links da árvore.
+ */
+const resolveNewDocTarget = async (data) => {
+
+  const processNumber = (data[processoColumn] || '').toString().trim();
+  if (!processNumber)
+    throw new Error(`Número de processo vazio na coluna "${processoColumn}".`);
+
+  /* A pesquisa rápida do SEI (acao=protocolo_pesquisa_rapida) redireciona direto para o
+     processo quando há correspondência exata. Reutilizamos a action do formulário da barra
+     superior, que já traz infra_sistema/infra_unidade_atual/infra_hash válidos para essa ação. */
+  let urlSearch = $('#frmProtocoloPesquisaRapida').attr('action');
+  if (!urlSearch) {
+    const p = getUrlParams(window.location.href);
+    urlSearch = 'controlador.php?acao=protocolo_pesquisa_rapida';
+    if (p.infra_sistema) urlSearch += `&infra_sistema=${p.infra_sistema}`;
+    if (p.infra_unidade_atual) urlSearch += `&infra_unidade_atual=${p.infra_unidade_atual}`;
+    if (p.infra_hash) urlSearch += `&infra_hash=${p.infra_hash}`;
+  }
+
+  const xhr = new XMLHttpRequest();
+  const htmlSearch = await $.ajax({
+    method: 'POST',
+    url: urlSearch,
+    data: { txtPesquisaRapida: processNumber },
+    xhr: () => xhr
+  });
+
+  /* O destino pode vir como redirecionamento HTTP (responseURL) ou embutido no HTML retornado */
+  let urlProc = (xhr.responseURL && xhr.responseURL.indexOf('acao=procedimento_trabalhar') !== -1) ? xhr.responseURL : null;
+  if (!urlProc) {
+    const redirect = String(htmlSearch).match(/controlador\.php\?acao=procedimento_trabalhar[^"'\\\s>]*/);
+    if (redirect) urlProc = redirect[0].replace(/&amp;/g, '&');
+  }
+  if (!urlProc)
+    throw new Error(`Processo ${processNumber} não localizado no SEI ou sem permissão de acesso na unidade.`);
+
+  /* Página do processo -> URL da árvore (com hash válido) -> HTML da árvore -> link de novo documento */
+  const htmlProc = await $.get(urlProc);
+  const urlArvore = $(htmlProc).find('#ifrArvore').attr('src');
+  if (!urlArvore)
+    throw new Error(`Não foi possível abrir a árvore do processo ${processNumber}.`);
+
+  const htmlArvore = await $.get(urlArvore);
+  const matchNewDoc = htmlArvore.match(/controlador\.php\?acao=documento_escolher_tipo[^"'\\\s>]*/);
+  if (!matchNewDoc)
+    throw new Error(`Link de novo documento não encontrado no processo ${processNumber}.`);
+
+  return {
+    urlNewDoc: matchNewDoc[0].replace(/&amp;/g, '&'),
+    urlArvore
+  };
+}
+
+/**
+ * Inclui o documento recém-gerado em um bloco de assinatura.
+ * Localiza, na árvore do processo, o link "Incluir em Bloco" do documento, abre o
+ * formulário, casa o número do bloco informado e posta a seleção.
+ */
+const incluirEmBloco = async (idDocumento, numBloco, urlArvore) => {
+
+  const cleanUrl = (url) => url ? String(url).replaceAll('&amp;', '&').replace(/[\\"]/g, '') : url;
+
+  /* Os links de ação por documento ficam dentro de strings JS na árvore (Nos[].acoes);
+     varremos o texto bruto separando por aspas para capturá-los. */
+  const extractLinks = (html) => {
+    const links = [];
+    String(html).split("'").filter((s) => s.indexOf('controlador.php') !== -1).forEach((value) => {
+      if (value.indexOf('"') !== -1)
+        value.split('"').filter((s) => s.indexOf('controlador.php') !== -1).forEach((l) => links.push(cleanUrl(l)));
+      else
+        links.push(cleanUrl(value));
+    });
+    return links;
+  };
+
+  const matchDoc = (link) => link.indexOf('id_documento=' + idDocumento) !== -1 || link.indexOf('id_protocolo=' + idDocumento) !== -1;
+  const findBlocoLink = (links) => links.find((link) => link.indexOf('bloco_escolher') !== -1 && matchDoc(link));
+
+  /* A URL da árvore capturada na criação é reutilizável e, ao ser recarregada após salvar,
+     já contém o documento recém-gerado e seu link de inclusão em bloco. */
+  const candidates = [];
+  if (urlArvore) candidates.push(urlArvore);
+  const liveSrc = $('#ifrArvore').attr('src');
+  if (liveSrc && candidates.indexOf(liveSrc) === -1) candidates.push(liveSrc);
+
+  let urlBloco = false;
+  for (let i = 0; i < candidates.length && !urlBloco; i++) {
+    let htmlArvore;
+    try { htmlArvore = await $.get(candidates[i]); } catch (e) { continue; }
+    urlBloco = findBlocoLink(extractLinks(htmlArvore));
+  }
+
+  if (!urlBloco)
+    throw new Error("Link 'Incluir em Bloco de Assinatura' não encontrado para o documento gerado.");
+
+  const htmlBloco = await $.get(urlBloco);
+  const blocoPage = $(htmlBloco);
+  const form = blocoPage.find('form').filter((_, f) => $(f).find('select').length > 0).first();
+  if (!form.length)
+    throw new Error('Formulário de inclusão em bloco não encontrado.');
+
+  const select = form.find('#selBloco, select[name="selBloco"], select[id*="Bloco"], select[name*="Bloco"]').first();
+  if (!select.length)
+    throw new Error('Campo de seleção do bloco de assinatura não encontrado.');
+
+  /* Cada opção é "NÚMERO - Descrição"; casamos pelo número inicial do texto ou pelo próprio value */
+  const buscaDigits = String(numBloco).replace(/\D/g, '');
+  let idBloco = false;
+  const disponiveis = [];
+  select.find('option').each((_, opt) => {
+    const value = String($(opt).val() || '').trim();
+    const text = $(opt).text().trim();
+    if (!value || value === 'null') return;
+    if (text) disponiveis.push(text);
+    const leading = (text.match(/^\s*(\d+)/) || [])[1] || '';
+    if (value === String(numBloco) || (buscaDigits && leading === buscaDigits)) {
+      idBloco = value;
+      return false;
+    }
+  });
+
+  if (!idBloco)
+    throw new Error(`Bloco de assinatura "${numBloco}" não encontrado nas opções disponíveis: [${disponiveis.join(' | ')}].`);
+
+  select.val(idBloco);
+
+  const selectName = select.attr('name');
+  const params = {};
+  form.find('input, select, textarea').each((_, el) => {
+    const $el = $(el);
+    const name = $el.attr('name');
+    const type = ($el.attr('type') || '').toLowerCase();
+    if (!name || ['button', 'submit', 'reset', 'image'].includes(type)) return;
+    if ((type === 'checkbox' || type === 'radio') && !$el.is(':checked')) return;
+    if (name === selectName) params[name] = idBloco;
+    else if ($el.is('select') && $el.prop('multiple')) params[name] = $el.val() || [];
+    else params[name] = $el.val() || '';
+  });
+  if (selectName && typeof params[selectName] === 'undefined') params[selectName] = idBloco;
+
+  /* O SEI exige o name=value do botão de salvar no POST para efetivar a inclusão; sem ele
+     o formulário é apenas reexibido, gerando um falso "sucesso" sem incluir nada no bloco. */
+  const submit = form.find('#sbmSalvar, #btnSalvar, input[type="submit"], button[type="submit"], button:not([type])').first();
+  if (submit.length && submit.attr('name') && typeof params[submit.attr('name')] === 'undefined') {
+    params[submit.attr('name')] = submit.val() || submit.text() || '';
+  }
+
+  const action = form.attr('action') || urlBloco;
+  const responseBloco = await $.ajax({
+    method: 'POST',
+    url: action,
+    data: $.param(params),
+    contentType: 'application/x-www-form-urlencoded; charset=ISO-8859-1'
+  });
+  const errorMsg = $(responseBloco).find('.infraMensagem, #divInfraMensagem, .infraErro').text().trim();
+  if (errorMsg && !/inclu/i.test(errorMsg))
+    throw new Error(`Erro ao incluir em bloco de assinatura: ${errorMsg}`);
+
+  return { success: true, id_bloco: idBloco };
 }
 
 export const abortAjax = () => {

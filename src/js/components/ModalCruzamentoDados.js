@@ -28,6 +28,8 @@ const ModalCruzamentoDados = () => {
           $('#execucao').dialog("open");
           functions.getDocsNames();
           functions.getDescricaoDoc();
+          functions.getProcessoConfig();
+          functions.getBlocoConfig();
           functions.execute();
           functions.clearInputs();
         }
