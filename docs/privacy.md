@@ -56,7 +56,7 @@ A extensão é uma versão estendida (fork) do projeto PluriDocs-SEI.
 ## Contato
 
 Dúvidas sobre esta política podem ser enviadas para:
-**[alexandre.augusto@outlook.com](mailto:alexandre.augusto@outlook.com)**
+**[sa.alexandre@gmail.com](mailto:sa.alexandre@gmail.com)**
 
 ## Alterações
 
