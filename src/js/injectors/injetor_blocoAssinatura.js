@@ -94,9 +94,9 @@
     let nome = limparNome(label, tipo) || label || ('documento_' + idDocumento);
 
     /* Nome genérico de digitalização não identifica o documento: usa o número do
-       processo sem pontos e barras (ex.: 10154.034009/2026-61 -> 101540340092026-61). */
+       processo só com dígitos (ex.: 10154.034009/2026-61 -> 10154034009202661). */
     if (NOME_GENERICO_RE.test(nome) || NOME_GENERICO_RE.test(label || '')) {
-      const numero = (processo || '').replace(/[.\/\\]/g, '').trim();
+      const numero = (processo || '').replace(/\D/g, '');
       if (numero) nome = numero;
     }
 
