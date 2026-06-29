@@ -29,11 +29,6 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const clean = (u) => (u || '').replace(/&amp;/g, '&');
 
-  /* Rótulo genérico de documentos digitalizados, sem nome próprio que identifique o
-     documento (ex.: "Digitalizado na SPU/MG"). Nesses casos o arquivo é nomeado pelo
-     número do processo. Casa "Digitalizado na ..." / "Digitalizada no ...". */
-  const NOME_GENERICO_RE = /digitalizad[oa]\s+n[ao]\b/i;
-
   /* Converte o rótulo da árvore "<Tipo> <Nome> (<número>)" no nome desejado para o
      arquivo: remove o trecho final entre parênteses e o tipo do documento (prefixo). */
   const limparNome = (label, tipo) => {
@@ -81,7 +76,7 @@
 
   /* Gera e retorna o PDF (blob) e o nome (já sem tipo/número) de um documento, a partir
      do link "procedimento_trabalhar" da linha do bloco (que contém id_documento). */
-  const gerarPdfDocumento = async (procHref, tipo, processo) => {
+  const gerarPdfDocumento = async (procHref, tipo) => {
     const idDocumento = (procHref.match(/id_documento=(\d+)/) || [])[1];
     if (!idDocumento) throw new Error('id_documento não encontrado no link do processo.');
 
@@ -91,14 +86,7 @@
 
     const htmlArvore = await fetch(clean(urlArvore)).then((r) => r.text());
     const label = extrairNomeArvore(htmlArvore, idDocumento);
-    let nome = limparNome(label, tipo) || label || ('documento_' + idDocumento);
-
-    /* Nome genérico de digitalização não identifica o documento: usa o número do
-       processo só com dígitos (ex.: 10154.034009/2026-61 -> 10154034009202661). */
-    if (NOME_GENERICO_RE.test(nome) || NOME_GENERICO_RE.test(label || '')) {
-      const numero = (processo || '').replace(/\D/g, '');
-      if (numero) nome = numero;
-    }
+    const nome = limparNome(label, tipo) || label || ('documento_' + idDocumento);
 
     const urlFormPdf = (htmlArvore.match(/controlador\.php\?acao=procedimento_gerar_pdf[^"'\\\s]*/) || [])[0];
     if (!urlFormPdf) throw new Error('Ação "Gerar PDF" não disponível neste processo.');
@@ -315,7 +303,7 @@
     for (let i = 0; i < itens.length; i++) {
       if (status) { status.style.color = '#0a5'; status.textContent = 'Processando ' + (i + 1) + '/' + itens.length + '…'; }
       try {
-        const { blob, nome } = await gerarPdfDocumento(itens[i].procHref, itens[i].tipo, itens[i].processo);
+        const { blob, nome } = await gerarPdfDocumento(itens[i].procHref, itens[i].tipo);
         const finalNome = nomeUnico(sanitizeFilename(nome), usados) + '.pdf';
         if (modo === 'zip') arquivos.push({ name: finalNome, data: new Uint8Array(await blob.arrayBuffer()) });
         else baixarBlob(blob, finalNome);
