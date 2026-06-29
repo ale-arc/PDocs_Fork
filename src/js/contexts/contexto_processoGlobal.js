@@ -7,6 +7,7 @@ import ModalAnaliseCSV from "../components/ModalAnaliseCSV.js"
 import ModalCruzamentoDados from "../components/ModalCruzamentoDados.js"
 import ModalLoader from "../components/ModalLoader.js"
 import ModalErro from "../components/ModalErro.js"
+import ModalSucesso from "../components/ModalSucesso.js"
 
 setSeiVersion();
 BotaoMock();
@@ -17,4 +18,5 @@ ModalAnaliseCSV();
 ModalCruzamentoDados();
 ModalLoader();
 ModalErro();
+ModalSucesso();
 

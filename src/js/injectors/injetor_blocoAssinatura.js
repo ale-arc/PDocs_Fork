@@ -22,11 +22,17 @@
 
   const BTN_PDF_ID = 'btnBaixarBlocoPluri';
   const BTN_ZIP_ID = 'btnBaixarBlocoZipPluri';
+  const BTN_ATRIB_ID = 'btnAtribuirBlocoPluri';
   const STATUS_ID = 'statusBaixarBlocoPluri';
   const TABLE_ID = 'tblProtocolosBlocos';
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const clean = (u) => (u || '').replace(/&amp;/g, '&');
+
+  /* Rótulo genérico de documentos digitalizados, sem nome próprio que identifique o
+     documento (ex.: "Digitalizado na SPU/MG"). Nesses casos o arquivo é nomeado pelo
+     número do processo. Casa "Digitalizado na ..." / "Digitalizada no ...". */
+  const NOME_GENERICO_RE = /digitalizad[oa]\s+n[ao]\b/i;
 
   /* Converte o rótulo da árvore "<Tipo> <Nome> (<número>)" no nome desejado para o
      arquivo: remove o trecho final entre parênteses e o tipo do documento (prefixo). */
@@ -75,7 +81,7 @@
 
   /* Gera e retorna o PDF (blob) e o nome (já sem tipo/número) de um documento, a partir
      do link "procedimento_trabalhar" da linha do bloco (que contém id_documento). */
-  const gerarPdfDocumento = async (procHref, tipo) => {
+  const gerarPdfDocumento = async (procHref, tipo, processo) => {
     const idDocumento = (procHref.match(/id_documento=(\d+)/) || [])[1];
     if (!idDocumento) throw new Error('id_documento não encontrado no link do processo.');
 
@@ -85,7 +91,14 @@
 
     const htmlArvore = await fetch(clean(urlArvore)).then((r) => r.text());
     const label = extrairNomeArvore(htmlArvore, idDocumento);
-    const nome = limparNome(label, tipo) || label || ('documento_' + idDocumento);
+    let nome = limparNome(label, tipo) || label || ('documento_' + idDocumento);
+
+    /* Nome genérico de digitalização não identifica o documento: usa o número do
+       processo sem pontos e barras (ex.: 10154.034009/2026-61 -> 101540340092026-61). */
+    if (NOME_GENERICO_RE.test(nome) || NOME_GENERICO_RE.test(label || '')) {
+      const numero = (processo || '').replace(/[.\/\\]/g, '').trim();
+      if (numero) nome = numero;
+    }
 
     const urlFormPdf = (htmlArvore.match(/controlador\.php\?acao=procedimento_gerar_pdf[^"'\\\s]*/) || [])[0];
     if (!urlFormPdf) throw new Error('Ação "Gerar PDF" não disponível neste processo.');
@@ -215,7 +228,7 @@
   };
 
   const setBotoesAtivos = (ativo) => {
-    [BTN_PDF_ID, BTN_ZIP_ID].forEach((id) => { const b = document.getElementById(id); if (b) b.disabled = !ativo; });
+    [BTN_PDF_ID, BTN_ZIP_ID, BTN_ATRIB_ID].forEach((id) => { const b = document.getElementById(id); if (b) b.disabled = !ativo; });
   };
 
   /* ---------- Modal de resultado/erros (JS puro) ---------- */
@@ -302,7 +315,7 @@
     for (let i = 0; i < itens.length; i++) {
       if (status) { status.style.color = '#0a5'; status.textContent = 'Processando ' + (i + 1) + '/' + itens.length + '…'; }
       try {
-        const { blob, nome } = await gerarPdfDocumento(itens[i].procHref, itens[i].tipo);
+        const { blob, nome } = await gerarPdfDocumento(itens[i].procHref, itens[i].tipo, itens[i].processo);
         const finalNome = nomeUnico(sanitizeFilename(nome), usados) + '.pdf';
         if (modo === 'zip') arquivos.push({ name: finalNome, data: new Uint8Array(await blob.arrayBuffer()) });
         else baixarBlob(blob, finalNome);
@@ -329,6 +342,193 @@
     if (erros.length) mostrarModalErros(erros, ok, itens.length);
   };
 
+  /* ---------- Atribuir processo (dos documentos MARCADOS) a um usuário ---------- */
+
+  /* Linhas marcadas (checkbox) -> processos únicos {procHref, idProc, processo}. */
+  const coletarSelecionados = () => {
+    const tbl = document.getElementById(TABLE_ID);
+    if (!tbl) return [];
+    const seen = new Set();
+    const out = [];
+    [...tbl.querySelectorAll('tr')].forEach((tr) => {
+      const a = tr.querySelector('a[href*="acao=procedimento_trabalhar"][href*="id_documento="]');
+      if (!a) return;
+      const cb = tr.querySelector('input[type="checkbox"]');
+      if (!cb || !cb.checked) return;
+      const href = a.getAttribute('href');
+      const idProc = (href.match(/id_procedimento=(\d+)/) || [])[1];
+      if (!idProc || seen.has(idProc)) return;
+      seen.add(idProc);
+      const tds = tr.querySelectorAll('td');
+      out.push({ procHref: href, idProc, processo: tds[2] ? tds[2].textContent.trim() : '' });
+    });
+    return out;
+  };
+
+  /* Localiza e lê o formulário de atribuição do processo: ação (com hash válido),
+     campos ocultos e a lista de usuários do dropdown selAtribuicao. */
+  const obterFormAtribuicao = async (procHref) => {
+    const htmlProc = await fetch(clean(procHref)).then((r) => r.text());
+    const urlArvore = (htmlProc.match(/controlador\.php\?acao=procedimento_visualizar[^"'\\\s]*/) || [])[0];
+    if (!urlArvore) throw new Error('Árvore do processo não localizada.');
+    const arv = await fetch(clean(urlArvore)).then((r) => r.text());
+    const atrUrl = (arv.match(/controlador\.php\?acao=procedimento_atribuicao_cadastrar[^"'\\\s]*/) || [])[0];
+    if (!atrUrl) throw new Error('Atribuição não disponível neste processo (sem permissão?).');
+
+    const doc = new DOMParser().parseFromString(await fetch(clean(atrUrl)).then((r) => r.text()), 'text/html');
+    const form = doc.querySelector('#frmAtividadeAtribuir') || doc.querySelector('form');
+    if (!form) throw new Error('Formulário de atribuição não encontrado.');
+    const action = clean(form.getAttribute('action') || atrUrl);
+    const hidden = {};
+    form.querySelectorAll('input[type=hidden]').forEach((i) => { if (i.name) hidden[i.name] = i.value || ''; });
+    const sel = form.querySelector('#selAtribuicao, select[name="selAtribuicao"]');
+    const usuarios = sel
+      ? [...sel.options]
+        .filter((o) => o.value && o.value !== 'null' && o.value !== '0')
+        .map((o) => ({ id: o.value, nome: o.text.trim() }))
+      : [];
+    return { action, hidden, usuarios };
+  };
+
+  /* Efetiva a atribuição de um processo ao usuário escolhido (POST com sbmSalvar). */
+  const atribuirProcesso = async (procHref, idUsuario) => {
+    const { action, hidden } = await obterFormAtribuicao(procHref);
+    const params = new URLSearchParams();
+    Object.keys(hidden).forEach((k) => params.set(k, hidden[k]));
+    params.set('selAtribuicao', idUsuario);
+    params.set('sbmSalvar', 'Salvar'); // SEI exige o botão de salvar no corpo do POST
+    const resp = await fetch(action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=ISO-8859-1' },
+      body: params.toString()
+    }).then((r) => r.text());
+
+    /* Sucesso: o SEI sai do formulário (redireciona para o processo). Se a resposta
+       ainda contém o formulário de atribuição, a ação não foi efetivada. */
+    const rdoc = new DOMParser().parseFromString(resp, 'text/html');
+    if (rdoc.querySelector('#frmAtividadeAtribuir')) {
+      const msgEl = rdoc.querySelector('#divInfraMensagem, .infraErro, .infraMensagem');
+      throw new Error((msgEl && msgEl.textContent.trim()) || 'Atribuição não confirmada pelo SEI.');
+    }
+    return true;
+  };
+
+  const iniciarAtribuicao = async () => {
+    const processos = coletarSelecionados();
+    if (!processos.length) {
+      alert('Marque ao menos um documento (checkbox) no bloco para atribuir o processo.');
+      return;
+    }
+    setBotoesAtivos(false);
+    const status = getStatusEl();
+    if (status) { status.style.color = '#0a5'; status.textContent = 'Carregando usuários da unidade…'; }
+    let usuarios;
+    try {
+      usuarios = (await obterFormAtribuicao(processos[0].procHref)).usuarios;
+    } catch (e) {
+      if (status) { status.style.color = '#c00'; status.textContent = 'Erro ao carregar usuários: ' + (e.message || e); }
+      setBotoesAtivos(true);
+      return;
+    }
+    if (status) status.textContent = '';
+    setBotoesAtivos(true);
+    if (!usuarios.length) { alert('Não foi possível carregar a lista de usuários da unidade.'); return; }
+    mostrarModalAtribuir(processos, usuarios);
+  };
+
+  const mostrarModalAtribuir = (processos, usuarios) => {
+    fecharModal();
+    const overlay = document.createElement('div');
+    overlay.id = MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;max-width:560px;width:90%;max-height:80vh;display:flex;flex-direction:column;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.35);font-family:"Segoe UI",Arial,sans-serif;overflow:hidden;';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'padding:14px 18px;background:#2c6fbb;color:#fff;font-weight:bold;font-size:15px;';
+    header.textContent = 'PluriDocs — Atribuir processo';
+
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:16px 18px;overflow:auto;';
+    const info = document.createElement('p');
+    info.style.cssText = 'margin:0 0 12px;color:#333;font-size:14px;';
+    info.textContent = processos.length + ' processo(s) selecionado(s) serão atribuídos ao usuário escolhido:';
+    body.appendChild(info);
+
+    const sel = document.createElement('select');
+    sel.style.cssText = 'width:100%;padding:7px;font-size:14px;';
+    const ph = document.createElement('option');
+    ph.value = ''; ph.textContent = '— Selecione um usuário —';
+    sel.appendChild(ph);
+    usuarios.forEach((u) => { const o = document.createElement('option'); o.value = u.id; o.textContent = u.nome; sel.appendChild(o); });
+    body.appendChild(sel);
+
+    const prog = document.createElement('p');
+    prog.style.cssText = 'margin:12px 0 0;font-size:13px;font-weight:bold;color:#0a5;min-height:18px;';
+    body.appendChild(prog);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'padding:12px 18px;border-top:1px solid #eee;text-align:right;';
+    const btnCancelar = document.createElement('button');
+    btnCancelar.type = 'button'; btnCancelar.className = 'infraButton'; btnCancelar.textContent = 'Cancelar';
+    btnCancelar.style.cssText = 'padding:6px 16px;cursor:pointer;margin-right:8px;';
+    btnCancelar.addEventListener('click', fecharModal);
+    const btnAtribuir = document.createElement('button');
+    btnAtribuir.type = 'button'; btnAtribuir.className = 'infraButton'; btnAtribuir.textContent = 'Atribuir';
+    btnAtribuir.style.cssText = 'padding:6px 18px;cursor:pointer;font-weight:bold;';
+
+    btnAtribuir.addEventListener('click', async () => {
+      const idUsuario = sel.value;
+      if (!idUsuario) { alert('Selecione um usuário.'); return; }
+      const nomeUsuario = sel.options[sel.selectedIndex].text;
+      sel.disabled = true; btnAtribuir.disabled = true; btnCancelar.disabled = true;
+
+      let ok = 0;
+      const erros = [];
+      for (let i = 0; i < processos.length; i++) {
+        prog.style.color = '#0a5';
+        prog.textContent = 'Atribuindo ' + (i + 1) + '/' + processos.length + '…';
+        try { await atribuirProcesso(processos[i].procHref, idUsuario); ok++; }
+        catch (e) {
+          erros.push({ processo: processos[i].processo, msg: (e && e.message) ? e.message : String(e) });
+          console.error('PluriDocs [atribuir] processo ' + processos[i].processo + ' ->', e);
+        }
+        await sleep(250);
+      }
+
+      info.textContent = ok + ' de ' + processos.length + ' processo(s) atribuído(s) a "' + nomeUsuario + '".';
+      sel.style.display = 'none';
+      if (erros.length) {
+        prog.style.color = '#c00';
+        prog.textContent = erros.length + ' falha(s):';
+        const ul = document.createElement('ul');
+        ul.style.cssText = 'margin:8px 0 0;padding-left:18px;color:#444;font-size:13px;line-height:1.5;';
+        erros.forEach((er) => {
+          const li = document.createElement('li'); li.style.marginBottom = '6px';
+          const b = document.createElement('strong'); b.textContent = 'Processo ' + (er.processo || '?') + ': ';
+          const s = document.createElement('span'); s.textContent = er.msg;
+          li.appendChild(b); li.appendChild(s); ul.appendChild(li);
+        });
+        body.appendChild(ul);
+      } else {
+        prog.style.color = '#0a5';
+        prog.textContent = 'Concluído com sucesso! 👏';
+      }
+      btnAtribuir.style.display = 'none';
+      btnCancelar.disabled = false; btnCancelar.textContent = 'Fechar';
+    });
+
+    footer.appendChild(btnCancelar);
+    footer.appendChild(btnAtribuir);
+    box.appendChild(header);
+    box.appendChild(body);
+    box.appendChild(footer);
+    overlay.appendChild(box);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) fecharModal(); });
+    document.addEventListener('keydown', onEscModal);
+    document.body.appendChild(overlay);
+  };
+
   const criarBotao = (id, texto, titulo, onClick) => {
     const btn = document.createElement('button');
     btn.id = id;
@@ -352,6 +552,8 @@
       'Baixa cada documento do bloco como um PDF, nomeado pelo nome na árvore', () => processar('individual')));
     bar.appendChild(criarBotao(BTN_ZIP_ID, '🗜 Baixar ZIP (PluriDocs)',
       'Baixa todos os documentos do bloco em um único arquivo .zip', () => processar('zip')));
+    bar.appendChild(criarBotao(BTN_ATRIB_ID, '👤 Atribuir processos (PluriDocs)',
+      'Atribui os processos dos documentos MARCADOS (checkbox) a um usuário da unidade', iniciarAtribuicao));
 
     const status = document.createElement('span');
     status.id = STATUS_ID;

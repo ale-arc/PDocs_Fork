@@ -16,6 +16,8 @@ let forceNames = false;
 let useExistingProcess = false;
 let processoColumn = '';
 let blocoAssinatura = '';
+let createdCount = 0;
+let blocoFailCount = 0;
 
 /* Extrai os parâmetros (query string) de uma URL do SEI em um objeto */
 const getUrlParams = (url) => {
@@ -391,6 +393,8 @@ export const getBlocoConfig = () => {
 export const execute = async () => {
 
   aborted = false;
+  createdCount = 0;
+  blocoFailCount = 0;
 
   const idIframe = /^4\.1|^4\.0\.(9|12)|^5/.test(getSeiVersion()) ? "#ifrConteudoVisualizacao" : "#ifrVisualizacao";
 
@@ -457,16 +461,22 @@ Deseja continuar ?
           if (idDocumento && numBloco)
             await incluirEmBloco(idDocumento, numBloco, target.urlArvore);
         } catch (blocoErr) {
+          blocoFailCount++;
           console.error(`PluriDocs: falha ao incluir documento da linha ${i + 1} no bloco de assinatura ->`, blocoErr);
         }
       }
 
-      response6.success && $('#progress').html(`<p style="text-align:center">${i + 1}/${CSVData.length}</p>`);
+      if (response6.success) {
+        createdCount++;
+        $('#progress').html(`<p style="text-align:center">${i + 1}/${CSVData.length}</p>`);
+      }
 
       if (i + 1 === CSVData.length) throw new Error("cancel");
 
     } catch (e) {
       if (e.message && e.message === "cancel") {
+        /* completou = terminou todos os registros; !completou = cancelado pelo usuário */
+        const completou = !aborted;
         /* No modo "processo existente" os documentos foram criados em outros processos;
            recarregar a árvore do processo atual é inútil e ainda dispara um erro interno
            do SEI (alterarTargetAcoes / seletor !=). Só recarregamos no modo padrão. */
@@ -478,6 +488,15 @@ Deseja continuar ?
             $('#execucao').dialog('close');
             $('#cancelExecute').show();
             $('#progress').html(`<p style="text-align:center">Preparando ambiente</p>`)
+            if (completou) {
+              let resumo = `<strong>${createdCount}</strong> de <strong>${CSVData.length}</strong> documento(s) criado(s) com sucesso.`;
+              if (blocoAssinatura)
+                resumo += blocoFailCount > 0
+                  ? `<br><small style="color:#c0392b">${blocoFailCount} não pôde(puderam) ser incluído(s) no bloco de assinatura (ver console).</small>`
+                  : `<br><small style="color:#0a8a4f">Todos incluídos no bloco de assinatura.</small>`;
+              $('#sucessoResumo').html(resumo);
+              $('#modalSucesso').dialog('open');
+            }
           }, 2000);
         }, 500)
       } else {
