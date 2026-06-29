@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "PluriDocs - SEI!",
+  "name": "PDocs SEI",
   "version": "0.0.12.2",
-  "description":"Extensão para o SEI com a funcão de inserção de documentos em lote em um processo utilizando um arquivo .CSV como base de dados.", 
+  "description": "Versão estendida para o SEI: inserção de documentos em lote via CSV, inclusão em bloco de assinatura e download de blocos em PDF.",
+  "author": "ale-arc",
+  "homepage_url": "https://github.com/ale-arc/PDocs_Fork",
   "icons": {
     "16": "src/icons/logo-16.png",
     "48": "src/icons/logo-48.png",
