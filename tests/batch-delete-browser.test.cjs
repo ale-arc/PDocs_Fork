@@ -14,7 +14,8 @@ test('real browser: tree selection, confirmation, deletion, dynamic nodes and re
   const ids = new Set(['12', '123']);
   const deletions = [];
   const assetPaths = new Set([
-    '/src/js/components/BatchDelete.js', '/src/js/functions/batchDelete.js', '/src/css/batchDelete.css'
+    '/src/js/components/BatchDelete.js', '/src/js/functions/batchDelete.js', '/src/css/batchDelete.css',
+    '/src/js/components/BotaoExclusaoLote.js', '/src/img/excluir-lote.svg'
   ]);
   const treeHtml = () => `<html><head></head><body><div id="divArvore">
     <a id="anchor1" href="controlador.php?acao=arvore_visualizar&id_procedimento=1">Processo 1</a>
@@ -28,10 +29,15 @@ test('real browser: tree selection, confirmation, deletion, dynamic nodes and re
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (assetPaths.has(url.pathname)) {
-      res.setHeader('Content-Type', url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript');
+      res.setHeader('Content-Type', url.pathname.endsWith('.svg') ? 'image/svg+xml' : url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript');
       return res.end(fs.readFileSync(path.join(process.cwd(), url.pathname)));
     }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    if (url.pathname === '/toolbar') return res.end(`<html><body>
+      <div id="divArvoreAcoes"><a id="btn-modal">Inserir arquivos em lote</a></div>
+      <script type="module">window.chrome = { runtime: { getURL: p => new URL('/' + p, location.href).href } };
+      const { default: initialize } = await import('/src/js/components/BotaoExclusaoLote.js'); initialize(); initialize();</script>
+      </body></html>`);
     const action = url.searchParams.get('acao');
     if (action === 'documento_excluir') {
       const id = url.searchParams.get('id_documento');
@@ -40,6 +46,7 @@ test('real browser: tree selection, confirmation, deletion, dynamic nodes and re
     if (action === 'procedimento_visualizar') return res.end(treeHtml());
     res.end(`<html><head><link rel="stylesheet" href="/src/css/batchDelete.css"></head><body>
       <iframe id="ifrArvore" src="/controlador.php?acao=procedimento_visualizar&id_procedimento=1" style="height:500px;width:350px"></iframe>
+      <iframe id="ifrVisualizacao" src="/toolbar"></iframe>
       <script type="module">window.chrome = { runtime: { getURL: p => new URL('/' + p, location.href).href } };
       const {default: initialize} = await import('/src/js/components/BatchDelete.js'); initialize();</script>
       </body></html>`);
@@ -86,8 +93,22 @@ test('real browser: tree selection, confirmation, deletion, dynamic nodes and re
       const end = Date.now() + 5000;
       const check = () => { if (${expression}) resolve(true); else if (Date.now() > end) reject(new Error('UI timed out')); else setTimeout(check, 20); }; check();
     })`);
+    await waitFor("document.querySelector('#ifrVisualizacao')?.contentDocument?.querySelector('#pdocs-delete-icon') && document.querySelector('#ifrArvore')?.contentDocument?.querySelector('#divArvore') && document.querySelector('#pdocs-delete-toggle')");
+    assert.equal(await evaluate("document.querySelector('#ifrArvore').contentDocument.querySelector('#pdocs-delete-toolbar')"), null);
+    assert.equal(await evaluate("document.querySelector('#ifrArvore').contentDocument.querySelectorAll('.pdocs-delete-checkbox').length"), 0);
+    assert.equal(await evaluate("document.querySelector('#ifrVisualizacao').contentDocument.querySelector('#btn-modal').nextElementSibling.id"), 'pdocs-delete-icon');
+    assert.equal(await evaluate("document.querySelector('#ifrVisualizacao').contentDocument.querySelectorAll('#pdocs-delete-icon').length"), 1);
+    await evaluate("document.querySelector('#ifrVisualizacao').contentDocument.querySelector('#pdocs-delete-icon').click()");
     await waitFor("document.querySelector('#ifrArvore')?.contentDocument?.querySelectorAll('.pdocs-delete-checkbox').length === 2");
+    assert.equal(await evaluate("document.querySelector('#ifrVisualizacao').contentDocument.querySelector('#pdocs-delete-icon').getAttribute('aria-pressed')"), 'true');
+    await evaluate("document.querySelector('#ifrArvore').contentDocument.querySelector('#pdocs-delete-12').click(); document.querySelector('#ifrArvore').contentDocument.querySelector('[data-action=exit]').click()");
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('#ifrArvore').contentDocument.querySelector('#pdocs-delete-toolbar')).display"), 'none');
+    assert.equal(await evaluate("document.querySelector('#ifrArvore').contentDocument.querySelector('#pdocs-delete-12').checked"), false);
+    assert.equal(await evaluate("document.querySelector('#ifrArvore').contentDocument.querySelector('#pdocs-delete-12').hidden"), true);
+    await evaluate("document.querySelector('#ifrVisualizacao').contentDocument.querySelector('#pdocs-delete-icon').click()");
     assert.equal(await evaluate("document.querySelector('#ifrArvore').contentDocument.querySelectorAll('#pdocs-delete-toolbar').length"), 1);
+    await evaluate("document.querySelector('#ifrVisualizacao').contentWindow.location.reload()");
+    await waitFor("document.querySelector('#ifrVisualizacao').contentDocument.querySelector('#pdocs-delete-icon')?.getAttribute('aria-pressed') === 'true'");
     assert.equal(await evaluate("document.querySelector('#ifrArvore').contentDocument.querySelector('#pdocs-delete-1') === null"), true);
     await evaluate("document.querySelector('#ifrArvore').contentDocument.querySelector('#pdocs-delete-12').click(); document.querySelector('#ifrArvore').contentDocument.querySelector('#pdocs-delete-selected').click()");
     assert.equal(await evaluate("document.querySelector('#pdocs-delete-dialog').open"), true);

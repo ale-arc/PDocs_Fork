@@ -5,6 +5,7 @@
   font: 12px Arial, sans-serif;
 }
 #pdocs-delete-toolbar strong { width: 100%; }
+#pdocs-delete-toolbar[hidden], .pdocs-delete-checkbox[hidden] { display: none !important; }
 #pdocs-delete-toolbar button, #pdocs-delete-dialog button {
   cursor: pointer; padding: 6px 9px; border: 1px solid #8795a6;
   border-radius: 4px; background: #fff; color: #172b4d; font: 13px Arial, sans-serif;

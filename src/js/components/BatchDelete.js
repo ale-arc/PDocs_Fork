@@ -6,8 +6,26 @@ export default function initialize() {
   let treeObserver;
   let running = false;
   let cancelled = false;
+  let selectionActive = false;
   const selected = new Map();
   const frameListeners = new WeakSet();
+  const toggle = document.createElement('button');
+  toggle.id = 'pdocs-delete-toggle';
+  toggle.type = 'button';
+  toggle.hidden = true;
+  toggle.setAttribute('aria-pressed', 'false');
+  toggle.addEventListener('click', () => {
+    if (running || dialog.open) return;
+    selectionActive = !selectionActive;
+    toggle.setAttribute('aria-pressed', String(selectionActive));
+    if (!selectionActive) {
+      selected.clear();
+      treeDocument?.querySelectorAll('.pdocs-delete-checkbox').forEach(input => { input.checked = false; });
+    }
+    const frame = document.getElementById('ifrArvore');
+    if (frame && treeDocument) decorate(frame);
+  });
+  document.body.append(toggle);
   const dialog = document.createElement('dialog');
   dialog.id = 'pdocs-delete-dialog';
   dialog.setAttribute('aria-labelledby', 'pdocs-delete-title');
@@ -47,6 +65,15 @@ export default function initialize() {
       button.disabled = running || selected.size === 0;
     }
     treeDocument.querySelectorAll('[data-pdocs-delete-control]').forEach(control => { control.disabled = running; });
+    treeDocument.querySelectorAll('input[data-attempted]').forEach(input => { input.disabled = true; });
+    const toolbar = treeDocument.getElementById('pdocs-delete-toolbar');
+    if (toolbar) toolbar.hidden = !selectionActive;
+    treeDocument.querySelectorAll('.pdocs-delete-checkbox').forEach(input => { input.hidden = !selectionActive; });
+    document.querySelectorAll('iframe').forEach(frame => {
+      try {
+        frame.contentDocument?.getElementById('pdocs-delete-icon')?.setAttribute('aria-pressed', String(selectionActive));
+      } catch { /* Ignore unrelated cross-origin frames. */ }
+    });
   }
 
   function openConfirmation(frame) {
@@ -125,6 +152,7 @@ export default function initialize() {
 
   function decorate(frame) {
     if (!treeDocument?.body) return;
+    if (!selectionActive) { updateControls(); return; }
     if (!treeDocument.getElementById('pdocs-delete-toolbar')) {
       const style = treeDocument.createElement('link');
       style.rel = 'stylesheet';
@@ -135,7 +163,8 @@ export default function initialize() {
       toolbar.innerHTML = `<strong>PDocs · Ações em lote</strong>
         <button type="button" data-pdocs-delete-control data-action="all">Marcar exibidos</button>
         <button type="button" data-pdocs-delete-control data-action="none">Limpar</button>
-        <button type="button" id="pdocs-delete-selected" disabled>Excluir selecionados (0)</button>`;
+        <button type="button" id="pdocs-delete-selected" disabled>Excluir selecionados (0)</button>
+        <button type="button" data-pdocs-delete-control data-action="exit">Sair da seleção</button>`;
       treeDocument.body.prepend(toolbar);
       toolbar.querySelector('[data-action="all"]').addEventListener('click', () => {
         treeDocument.querySelectorAll('input.pdocs-delete-checkbox:not(:disabled)').forEach(input => {
@@ -148,6 +177,7 @@ export default function initialize() {
         updateControls();
       });
       toolbar.querySelector('#pdocs-delete-selected').addEventListener('click', () => openConfirmation(frame));
+      toolbar.querySelector('[data-action="exit"]').addEventListener('click', () => toggle.click());
     }
     const liveIds = new Set();
     treeDocument.querySelectorAll('a[id^="anchor"][href]').forEach(anchor => {
