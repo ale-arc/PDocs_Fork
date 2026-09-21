@@ -1,0 +1,26 @@
+#pdocs-delete-toolbar {
+  position: sticky; top: 0; z-index: 10; padding: 8px;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  background: #f4f6f8; color: #1d2939; border-bottom: 1px solid #b8c3d1;
+  font: 12px Arial, sans-serif;
+}
+#pdocs-delete-toolbar strong { width: 100%; }
+#pdocs-delete-toolbar button, #pdocs-delete-dialog button {
+  cursor: pointer; padding: 6px 9px; border: 1px solid #8795a6;
+  border-radius: 4px; background: #fff; color: #172b4d; font: 13px Arial, sans-serif;
+}
+#pdocs-delete-toolbar button:disabled, #pdocs-delete-dialog button:disabled { opacity: .55; cursor: default; }
+#pdocs-delete-selected, #pdocs-delete-dialog [data-action="confirm"] { color: #a51d24; border-color: #a51d24; }
+.pdocs-delete-checkbox { margin: 0 5px; vertical-align: middle; accent-color: #a51d24; }
+#pdocs-delete-dialog {
+  width: min(620px, 85vw); max-height: 85vh; overflow: auto;
+  padding: 24px; border: 1px solid #8795a6; border-radius: 8px;
+  background: #fff; color: #1d2939; font: 14px/1.5 Arial, sans-serif;
+}
+#pdocs-delete-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+#pdocs-delete-dialog h2 { margin: 0 0 12px; font-size: 20px; }
+#pdocs-delete-dialog ul { max-height: 40vh; overflow: auto; padding-left: 24px; }
+#pdocs-delete-dialog li { margin-bottom: 8px; overflow-wrap: anywhere; }
+#pdocs-delete-dialog [data-status="deleted"] { color: #216439; }
+#pdocs-delete-dialog [data-status="error"], #pdocs-delete-dialog [data-status="uncertain"] { color: #a51d24; }
+#pdocs-delete-dialog .pdocs-delete-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
