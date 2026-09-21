@@ -1,3 +1,5 @@
+import BotaoExclusaoLote from './BotaoExclusaoLote.js';
+
 const BotaoAcao = (urlImg) => {
 
   $("#divArvoreAcoes").append(`
@@ -6,6 +8,7 @@ const BotaoAcao = (urlImg) => {
   </a>
   `)
   $('#btn-modal').click(() => $("#trigger-modal", window.parent.document)[0].click());
+  BotaoExclusaoLote();
 
 };
 

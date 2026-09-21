@@ -2,3 +2,9 @@
     display: flex;
     flex-wrap: wrap;
 }
+
+#pdocs-delete-icon[aria-pressed="true"] {
+    background: #ffe9e9;
+    border-radius: 4px;
+    outline: 2px solid #a51d24;
+}

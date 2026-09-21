@@ -34,7 +34,7 @@ Segue abaixo os passos para obtenção de um bom resultado com o programa:
 
 ## Excluir documentos em lote pela árvore
 
-1. Abra o processo. A barra **PDocs · Ações em lote** aparece acima da árvore.
+1. Abra o processo e clique no ícone **Excluir documentos em lote**, ao lado de **Inserir arquivos em lote**. Só então a barra **PDocs · Ações em lote** e as caixas de seleção aparecem na árvore.
 2. Marque as caixas ao lado dos documentos desejados. **Marcar exibidos** seleciona os documentos visíveis; expanda as pastas para selecionar outros documentos. **Limpar** desfaz a seleção.
 3. Clique em **Excluir selecionados** e confira os nomes na janela de confirmação.
 4. Clique em **Confirmar exclusão**. A exclusão é definitiva e depende das permissões que o SEI disponibiliza para cada documento.
@@ -42,7 +42,7 @@ Segue abaixo os passos para obtenção de um bom resultado com o programa:
 
 **Interromper após o documento atual** deixa os próximos documentos sem execução; não desfaz exclusões já realizadas. Documentos sem a ação nativa Excluir são informados como não excluídos. Se houver falha ou resultado incerto, o lote para: atualize o processo e confira o estado dos documentos antes de tentar novamente. Uma resposta HTTP bem-sucedida, sozinha, não é considerada prova de exclusão.
 
-Esta função não depende do SEI Pro. O botão aparece na tela de trabalho do processo, e as caixas são adicionadas aos documentos carregados na árvore, inclusive após expandir pastas ou atualizar o frame.
+Esta função não depende do SEI Pro. Use **Sair da seleção** ou clique novamente no ícone para ocultar os controles e limpar a seleção. Enquanto o modo de seleção estiver ativo, as caixas acompanham os documentos carregados na árvore, inclusive após expandir pastas ou atualizar o frame.
 
 Para qualquer dúvida, reportação de erro ou sugestão, por favor me contacte através do e-mail: [gontijo.tulio@gmail.com](mailto:gontijo.tulio@gmail.com)
 
