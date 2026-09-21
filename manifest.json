@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PDocs SEI",
-  "version": "0.0.12.2",
+  "version": "0.12.3",
   "description": "Versão estendida para o SEI: inserção de documentos em lote via CSV, inclusão em bloco de assinatura e download de blocos em PDF.",
   "author": "ale-arc",
   "homepage_url": "https://github.com/ale-arc/PDocs_Fork",

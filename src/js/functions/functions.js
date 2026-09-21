@@ -403,7 +403,7 @@ export const execute = async () => {
   let staticTarget = null;
   if (!useExistingProcess) {
     staticTarget = {
-      urlNewDoc: $(idIframe).contents().find("img[alt='Incluir Documento'").parent().attr('href'),
+      urlNewDoc: $(idIframe).contents().find("img[alt='Incluir Documento']").parent().attr('href'),
       urlArvore: $('#ifrArvore').attr('src')
     };
   }
@@ -434,21 +434,28 @@ Deseja continuar ?
   }
 
   for (let i = 0; i < CSVData.length; i++) {
+    let etapa = 'Localizar processo de destino';
 
     try {
 
       const target = useExistingProcess ? await resolveNewDocTarget(CSVData[i]) : staticTarget;
 
+      etapa = 'Abrir inclusão de documento';
       const response1 = await clickNewDoc(target.urlNewDoc);
 
+      etapa = 'Selecionar tipo de documento';
       const response2 = await selectDocType(response1.urlExpandDocList);
 
+      etapa = 'Abrir formulário do documento';
       const response3 = await formNewDoc(response2.urlFormNewDoc, response2.params, CSVData[i],);
 
+      etapa = 'Cadastrar documento';
       const response4 = await confirmDocData(response3.urlConfirmDocData, response3.params);
 
+      etapa = 'Abrir editor do documento';
       const response5 = await editDocContent(response4.urlEditor, CSVData[i]);
 
+      etapa = 'Salvar conteúdo do documento';
       const response6 = await saveDoc(response5.urlSubmitForm, response5.paramsSaveDoc);
 
       if (response6.success && blocoAssinatura) {
@@ -474,7 +481,7 @@ Deseja continuar ?
       if (i + 1 === CSVData.length) throw new Error("cancel");
 
     } catch (e) {
-      if (e.message && e.message === "cancel") {
+      if (e?.message === "cancel") {
         /* completou = terminou todos os registros; !completou = cancelado pelo usuário */
         const completou = !aborted;
         /* No modo "processo existente" os documentos foram criados em outros processos;
@@ -503,6 +510,7 @@ Deseja continuar ?
         flagError = true;
         console.log("Erro 😢 -> ", e);
         $('#execucao').dialog('close');
+        $('#modalErroDetalhe').text(`Registro ${i + 1} — ${etapa}: ${getReplicationErrorMessage(e)}`);
         $('#modalErro').dialog('open');
       }
       aborted = false;
@@ -512,6 +520,17 @@ Deseja continuar ?
 
 }
 
+
+const getReplicationErrorMessage = (error) => {
+  if (error?.message) return error.message;
+  if (typeof error?.status === 'number') {
+    if (error.status === 0)
+      return 'A requisição ao SEI foi interrompida ou não recebeu resposta. Verifique a conexão e a sessão do SEI.';
+    return `O SEI respondeu com HTTP ${error.status}${error.statusText ? ` (${error.statusText})` : ''}.`;
+  }
+  if (typeof error === 'string' && error.trim()) return error;
+  return 'Não foi possível concluir a replicação. Consulte o console do navegador para obter detalhes.';
+}
 
 const clickNewDoc = async (urlNewDoc) => {
 
@@ -768,6 +787,8 @@ const resolveNewDocTarget = async (data) => {
   const processNumber = (data[processoColumn] || '').toString().trim();
   if (!processNumber)
     throw new Error(`Número de processo vazio na coluna "${processoColumn}".`);
+  if (!/^\d[\d.\/\s-]*$/.test(processNumber))
+    throw new Error(`A coluna "${processoColumn}" contém "${processNumber}" em vez de um número de processo. Selecione a coluna com os números dos processos de destino ou desmarque a opção de processo existente para usar o processo atual.`);
 
   /* A pesquisa rápida do SEI (acao=protocolo_pesquisa_rapida) redireciona direto para o
      processo quando há correspondência exata. Reutilizamos a action do formulário da barra
@@ -798,21 +819,45 @@ const resolveNewDocTarget = async (data) => {
   if (!urlProc)
     throw new Error(`Processo ${processNumber} não localizado no SEI ou sem permissão de acesso na unidade.`);
 
-  /* Página do processo -> URL da árvore (com hash válido) -> HTML da árvore -> link de novo documento */
+  /* Reutiliza os links assinados do processo de destino, inclusive os painéis
+     de visualização onde o SEI 4.1 apresenta a barra de ações. */
   const htmlProc = await $.get(urlProc);
   const urlArvore = $(htmlProc).find('#ifrArvore').attr('src');
   if (!urlArvore)
     throw new Error(`Não foi possível abrir a árvore do processo ${processNumber}.`);
 
   const htmlArvore = await $.get(urlArvore);
-  const matchNewDoc = htmlArvore.match(/controlador\.php\?acao=documento_escolher_tipo[^"'\\\s>]*/);
-  if (!matchNewDoc)
-    throw new Error(`Link de novo documento não encontrado no processo ${processNumber}.`);
+  const urlNewDoc = await findNewDocLink([htmlProc, htmlArvore]);
+  if (!urlNewDoc)
+    throw new Error(`Link de novo documento não encontrado no processo ${processNumber}. Verifique se o processo está aberto na unidade e permite incluir documentos.`);
 
   return {
-    urlNewDoc: matchNewDoc[0].replace(/&amp;/g, '&'),
+    urlNewDoc,
     urlArvore
   };
+}
+
+const findNewDocLink = async (pages) => {
+  const visited = new Set();
+  for (let index = 0; index < pages.length; index++) {
+    const html = String(pages[index]);
+    const link = html.match(/controlador\.php\?acao=documento_escolher_tipo[^"'\\\s>]*/);
+    if (link) return link[0].replace(/&amp;/g, '&');
+
+    const frameUrls = ['#ifrVisualizacao', '#ifrConteudoVisualizacao']
+      .map((selector) => $(html).find(selector).attr('src'));
+    // A árvore também pode definir a visualização inicial em uma string JavaScript.
+    const initialView = html.match(/controlador\.php\?acao=arvore_visualizar[^"'\\\s>]*/);
+    if (initialView) frameUrls.push(initialView[0].replace(/&amp;/g, '&'));
+    for (const url of frameUrls) {
+      if (!url || visited.has(url) || visited.size >= 6) continue;
+      // Painéis vazios são inicializados pelo JavaScript do SEI; não são páginas HTTP.
+      if (/^about:blank(?:[?#]|$)/i.test(url.trim())) continue;
+      visited.add(url);
+      pages.push(await $.get(url));
+    }
+  }
+  return null;
 }
 
 /**

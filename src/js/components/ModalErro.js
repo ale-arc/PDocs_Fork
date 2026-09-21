@@ -7,10 +7,11 @@ const ModalErro = () => {
     <p>Eita! Algo deu errado na replicação de documentos 😔</p>
     <br>
     <p>Verifique as configurações selecionadas e tente novamente.</p>
+    <p id="modalErroDetalhe" style="overflow-wrap:anywhere"></p>
     <br>
     <small>Caso o problema persista, entre em contato com o desenvolvedor através do email:</small>
     <br><br>
-    <a href="mailto:gontijo.tulio@gmail.com" style="font-size: 12.5px">gontijo.tulio@gmail.com</a>
+    <a href="mailto:alexandre.augusto@outlook.com" style="font-size: 12.5px">alexandre.augusto@outlook.com</a>
     </div>
     </div>
   `)
