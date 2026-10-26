@@ -456,7 +456,7 @@ Deseja continuar ?
       const response5 = await editDocContent(response4.urlEditor, CSVData[i]);
 
       etapa = 'Salvar conteúdo do documento';
-      const response6 = await saveDoc(response5.urlSubmitForm, response5.paramsSaveDoc);
+      const response6 = await saveDoc(response5.urlSubmitForm, response5.paramsSaveDoc, response5.editor5);
 
       if (response6.success && blocoAssinatura) {
         const numBloco = blocoAssinatura.replace(/##(.*?)##/g, (match, col) =>
@@ -696,29 +696,19 @@ const confirmDocData = async (urlConfirmDocData, params) => {
     data: params
   })
 
-  const lines = htmlDocCreated.split('\n');
-
-  let urlEditor = '';
-  try {
-    if (getSeiVersion().startsWith("3")) {
-      urlEditor = lines.filter((line) => line.includes(`if ('controlador.php?acao=editor_montar`))[0].match(/'(.+)'!/)[1];
-    }
-    else if (getSeiVersion().startsWith("4.0")) {
-      urlEditor = lines.filter((line) => line.includes(`infraAbrirJanela('controlador.php?acao=editor_montar`))[0].match(/'(.+?)'/)[0].replaceAll("'", "");;
-    }
-    else if (/^4\.1|^4\.0\.(9|12)|^5/.test(getSeiVersion())) {
-      urlEditor = lines.filter((line) => line.includes(`var linkEditarConteudo = 'controlador.php?acao=editor_montar`))[0].match(/'(.+?)'/)[0].replaceAll("'", "");;
-    }
-    else {
-      
-      throw new Error('versão do SEI incompatível');
-    }
-  } catch (e) {
-    console.error(e);
-  }
-
+  /* Busca genérica do link do editor: o trecho de JS que o contém muda entre versões
+     do SEI (ex.: o 5.0.4 deixou de usar `var linkEditarConteudo = '...'`). */
+  const linkEditor = String(htmlDocCreated).match(/controlador\.php\?acao=editor_montar[^'"\\\s<>]*/);
+  const urlEditor = linkEditor ? linkEditor[0].replace(/&amp;/g, '&') : '';
 
   if (aborted) throw new Error("cancel");
+
+  /* Sem o link o SEI não cadastrou o documento (ou devolveu outra página); seguir
+     adiante faria os POSTs seguintes caírem na página atual do processo. */
+  if (!urlEditor) {
+    const msgSei = $(String(htmlDocCreated)).find('#divInfraMsg0, .infraExcecao, #divInfraExcecao').first().text().trim();
+    throw new Error(`O SEI não retornou o link do editor após cadastrar o documento.${msgSei ? ` Mensagem do SEI: ${msgSei}` : ''}`);
+  }
 
   return {
     urlEditor,
@@ -730,18 +720,39 @@ const editDocContent = async (urlEditor, data) => {
 
   const htmlEditor = await $.get(urlEditor);
 
-  const urlSubmitForm = $(htmlEditor).filter((_, el) => $(el).attr('id') === 'frmEditor').attr('action');
+  const regex1 = new RegExp(dataCrossing.map((data) => `##${data}##`).join('|'), 'g');
+  const regex2 = new RegExp(Object.keys(specialChars).join('|'), 'g');
+  const replaceFields = (html) => html.replace(regex1, (match) =>
+    data[match.substring(2, match.length - 2)].replace(regex2, (match) => specialChars[match])
+  );
+
+  /* frmEditor pode vir no nível superior do HTML parseado ou aninhado em outro elemento */
+  const editorNodes = $(htmlEditor);
+  const urlSubmitForm = editorNodes.filter('#frmEditor').add(editorNodes.find('#frmEditor')).first().attr('action');
+
+  /* SEI 5: documentos novos abrem no editor CKEditor 5, sem frmEditor. O conteúdo de cada
+     seção vem em INFRA_EDITOR_CONFIG.initialData e é salvo por JSON em sei.urlSalvar. */
+  if (!urlSubmitForm) {
+    const editor5 = getEditor5Config(htmlEditor);
+    if (!editor5)
+      throw new Error('Formulário do editor (frmEditor) não encontrado na página do editor do SEI.');
+
+    if (aborted) throw new Error("cancel");
+    return {
+      urlSubmitForm: editor5.sei.urlSalvar,
+      paramsSaveDoc: {
+        secoesConteudo: Object.entries(editor5.initialData).map(([nome, html]) => ({ nome, html: replaceFields(html) })),
+        ignorarNovaVersao: 'N',
+        versao: editor5.sei.versao
+      },
+      editor5: true,
+      success: true
+    }
+  }
 
   const textAreas = $(htmlEditor).find('div#divEditores textarea');
 
-  const regex1 = new RegExp(dataCrossing.map((data) => `##${data}##`).join('|'), 'g');
-  const regex2 = new RegExp(Object.keys(specialChars).join('|'), 'g');
-
-  const textAreasReplaced = textAreas.map((_, el) =>
-    $(el).text().replace(regex1, (match) =>
-      data[match.substring(2, match.length - 2)].replace(regex2, (match) => specialChars[match])
-    )
-  )
+  const textAreasReplaced = textAreas.map((_, el) => replaceFields($(el).text()))
 
   let paramsSaveDoc = {};
   textAreasReplaced.each((i, textArea) => {
@@ -761,7 +772,41 @@ const editDocContent = async (urlEditor, data) => {
   }
 
 }
-const saveDoc = async (urlSubmitForm, paramsSaveDoc) => {
+/* Lê o JSON de `window.INFRA_EDITOR_CONFIG = {...};` sem eval (proibido no content script) */
+const getEditor5Config = (htmlEditor) => {
+  const match = String(htmlEditor).match(/window\.INFRA_EDITOR_CONFIG\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/);
+  if (!match) return null;
+  try {
+    const config = JSON.parse(match[1]);
+    return config?.sei?.urlSalvar && config.initialData ? config : null;
+  } catch (e) {
+    console.error('PluriDocs: INFRA_EDITOR_CONFIG inválido ->', e);
+    return null;
+  }
+}
+
+const saveDoc = async (urlSubmitForm, paramsSaveDoc, editor5) => {
+  if (editor5) {
+    let responseSave;
+    try {
+      responseSave = await $.ajax({
+        method: 'POST',
+        url: urlSubmitForm,
+        contentType: 'application/json',
+        dataType: 'json',
+        data: JSON.stringify(paramsSaveDoc),
+      })
+    } catch (e) {
+      /* O SEI responde erros de salvamento como JSON { erro } com status != 200 */
+      if (e?.responseJSON?.erro) throw new Error(e.responseJSON.erro);
+      throw e;
+    }
+    if (aborted) throw new Error("cancel");
+    if (!responseSave?.versao)
+      throw new Error(`Resposta inesperada ao salvar no editor do SEI: ${JSON.stringify(responseSave)}`);
+    return { success: true }
+  }
+
   const responseSave = await $.ajax({
     method: 'POST',
     url: urlSubmitForm,
